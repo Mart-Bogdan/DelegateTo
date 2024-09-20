@@ -3,6 +3,8 @@
 [Generator]
 public class SourceGenerator : ISourceGenerator
 {
+    const string InlineAttr = "[System.Runtime.CompilerServices.MethodImplAttribute(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]";
+ 
     public void Execute(GeneratorExecutionContext context)
     {
         // retrieve the populated receiver
@@ -51,8 +53,6 @@ namespace {container.ContainingNamespace.ToDisplayString()}
             ? prop.Type
             : ((IFieldSymbol)property).Type;
         
-        var inlineAttr = item.inline 
-            ? "        [System.Runtime.CompilerServices.MethodImplAttribute(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]\n" : "";
         
         var publicMembers = type.GetMembers()
             .Where(m => m.CanBeReferencedByName && m.DeclaredAccessibility > Accessibility.Internal);
@@ -66,21 +66,36 @@ namespace {container.ContainingNamespace.ToDisplayString()}
             var parameterNames = m.Parameters.Select(p => p.Name).Join(", ");
             var methodName = m.Name;
             var returnType = m.ReturnType.ToDisplayString();
-            return $"{inlineAttr}        public {returnType} {methodName}({parameters}) => {property.Name}.{methodName}({parameterNames});";
+            return (item.inline ? $"        {InlineAttr}\n" : "") +
+                   $"        public {returnType} {methodName}({parameters}) => {property.Name}.{methodName}({parameterNames});";
         });
 
         var propertyExpressions = properties.Select(m =>
         {
             var methodName = m.Name;
             var returnType = m.Type.ToDisplayString();
-            var getExp = m.GetMethod is null ? "" : $"{inlineAttr} get => {property.Name}.{methodName}; ";
-            var setExp = m.SetMethod is null ? "" : $"{inlineAttr} set => {property.Name}.{methodName} = value; ";
-            return $"        public {returnType} {methodName} {{ {getExp} {setExp} }}";
+            var sb = new StringBuilder(1024);
+            sb.AppendLine($"        public {returnType} {methodName}\n" +
+                          $"        {{");
+            if (m.GetMethod is not null)
+            {
+                if (item.inline)
+                    sb.Append("            ").AppendLine(InlineAttr);
+                sb.AppendLine($"            get => {property.Name}.{methodName};");
+            }
+            if (m.SetMethod is not null)
+            {
+                if (item.inline)
+                    sb.Append("            ").AppendLine(InlineAttr);
+                sb.AppendLine($"            set => {property.Name}.{methodName} = value;");
+            }
+            sb.Append("        }");
+            return sb.ToString();
         });
 
         return methodExpressions
             .Concat(propertyExpressions)
-            .Join("\n");
+            .Join("\n\n");
     }
 
     public void Initialize(GeneratorInitializationContext context)
