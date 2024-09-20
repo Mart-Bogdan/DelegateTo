@@ -45,15 +45,9 @@ namespace {container.ContainingNamespace.ToDisplayString()}
 
     private string CreateDelegate(Compilation compilation, (ISymbol symbol, bool inline) item)
     {
-        ISymbol property = item.symbol;
-        if (!(property is IFieldSymbol || property is IPropertySymbol))
-            throw new Exception("Invalid property type, must be field or property");
+        var property = item.symbol;
+        var type = GetDeclarationsType(property);
 
-        var type = property is IPropertySymbol prop
-            ? prop.Type
-            : ((IFieldSymbol)property).Type;
-        
-        
         var publicMembers = type.GetMembers()
             .Where(m => m.CanBeReferencedByName && m.DeclaredAccessibility > Accessibility.Internal);
 
@@ -96,6 +90,16 @@ namespace {container.ContainingNamespace.ToDisplayString()}
         return methodExpressions
             .Concat(propertyExpressions)
             .Join("\n\n");
+    }
+
+    private static ITypeSymbol GetDeclarationsType(ISymbol property)
+    {
+        if (property is IPropertySymbol prop)
+            return prop.Type;
+        if (property is IFieldSymbol field)
+            return field.Type;
+
+        throw new InvalidOperationException("Bug in generator code. Only properties and fields are supposed to get at this stage.");
     }
 
     public void Initialize(GeneratorInitializationContext context)
