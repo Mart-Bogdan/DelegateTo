@@ -67,13 +67,13 @@ public class TestConstruction
 partial struct InlineStruct
 {
     [GenerateDelegate(Inline = true)]
-    public Child Child { get; set; }
+    public Child Child;
 }
 
 partial class InlineClass
 {
     [GenerateDelegate(Inline = true)]
-    public Child Child { get; set; }
+    public Child Child;
 }
 
 partial struct Parent
