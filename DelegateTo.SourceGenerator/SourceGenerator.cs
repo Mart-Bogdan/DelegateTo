@@ -12,7 +12,7 @@ public class SourceGenerator : ISourceGenerator
 
         var fieldsByClass = receiver
             .Fields
-            .GroupBy(f => f.ContainingType.ToDisplayString())
+            .GroupBy(f => f.symbol.ContainingType.ToDisplayString())
             .ToDictionary(f => f.Key);
 
         foreach (var (container, properties) in fieldsByClass)
@@ -22,27 +22,38 @@ public class SourceGenerator : ISourceGenerator
         }
     }
 
-    private string CreateDelegates(Compilation compilation, string _, IGrouping<string, IPropertySymbol> properties)
+    private string CreateDelegates(Compilation compilation, string _, IGrouping<string, (ISymbol symbol, bool inline)> properties)
     {
         var interfaces = "";
-        var container = properties.First().ContainingType;
+        var container = properties.First().symbol.ContainingType;
         var delegates = properties.Select(p => CreateDelegate(compilation, p));
         var access = container.DeclaredAccessibility >= Accessibility.Internal ? container.DeclaredAccessibility.ToString().ToLower() : "";
+        var typeKind =  container.TypeKind == TypeKind.Struct ? "struct" : "class";
         var result = @$"
 namespace {container.ContainingNamespace.ToDisplayString()}
 {{
-    {access} partial class {container.Name} {interfaces}
+    {access} partial {typeKind} {container.Name} {interfaces}
     {{
-        {string.Join("\n", delegates)}
+{string.Join("\n", delegates)}
     }}
 }}
 ";
         return result;
     }
 
-    private string CreateDelegate(Compilation compilation, IPropertySymbol property)
+    private string CreateDelegate(Compilation compilation, (ISymbol symbol, bool inline) item)
     {
-        var type = property.Type;
+        ISymbol property = item.symbol;
+        if (!(property is IFieldSymbol || property is IPropertySymbol))
+            throw new Exception("Invalid property type, must be field or property");
+
+        var type = property is IPropertySymbol prop
+            ? prop.Type
+            : ((IFieldSymbol)property).Type;
+        
+        var inlineAttr = item.inline 
+            ? "        [System.Runtime.CompilerServices.MethodImplAttribute(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]\n" : "";
+        
         var publicMembers = type.GetMembers()
             .Where(m => m.CanBeReferencedByName && m.DeclaredAccessibility > Accessibility.Internal);
 
@@ -55,16 +66,16 @@ namespace {container.ContainingNamespace.ToDisplayString()}
             var parameterNames = m.Parameters.Select(p => p.Name).Join(", ");
             var methodName = m.Name;
             var returnType = m.ReturnType.ToDisplayString();
-            return $"public {returnType} {methodName}({parameters}) => {property.Name}.{methodName}({parameterNames});";
+            return $"{inlineAttr}        public {returnType} {methodName}({parameters}) => {property.Name}.{methodName}({parameterNames});";
         });
 
         var propertyExpressions = properties.Select(m =>
         {
             var methodName = m.Name;
             var returnType = m.Type.ToDisplayString();
-            var getExp = m.GetMethod is null ? "" : $"get => {property.Name}.{methodName}; ";
-            var setExp = m.SetMethod is null ? "" : $"set => {property.Name}.{methodName} = value; ";
-            return $"public {returnType} {methodName} {{ {getExp} {setExp} }}";
+            var getExp = m.GetMethod is null ? "" : $"{inlineAttr} get => {property.Name}.{methodName}; ";
+            var setExp = m.SetMethod is null ? "" : $"{inlineAttr} set => {property.Name}.{methodName} = value; ";
+            return $"        public {returnType} {methodName} {{ {getExp} {setExp} }}";
         });
 
         return methodExpressions
@@ -89,7 +100,7 @@ namespace {container.ContainingNamespace.ToDisplayString()}
 /// </summary>
 class SyntaxReceiver : ISyntaxContextReceiver
 {
-    public List<IPropertySymbol> Fields { get; } = new();
+    public List<(ISymbol symbol, bool inline)> Fields { get; } = new();
 
     /// <summary>
     /// Called for every syntax node in the compilation, we can inspect the nodes and save any information useful for generation
@@ -101,9 +112,23 @@ class SyntaxReceiver : ISyntaxContextReceiver
             && propertyDeclarationSyntax.AttributeLists.Count > 0)
         {
             var symbol = context.SemanticModel.GetDeclaredSymbol(propertyDeclarationSyntax);
-            if (symbol!.GetAttributes().Any(ad => ad.AttributeClass!.ToDisplayString().Contains("GenerateDelegate")))
+            var attribute = symbol!.GetAttributes().FirstOrDefault(ad => ad.AttributeClass!.ToDisplayString().Contains("GenerateDelegate"));
+            if (attribute != null)
             {
-                Fields.Add(symbol);
+                Fields.Add((symbol, attribute.NamedArguments.Length == 1 && attribute.NamedArguments[0].Key == "Inline" && (attribute.NamedArguments[0].Value.Value?.Equals((object)true)??false)));
+            }
+        }
+        if (context.Node is FieldDeclarationSyntax fieldDeclarationSyntax
+            && fieldDeclarationSyntax.AttributeLists.Count > 0
+            && fieldDeclarationSyntax.Declaration.Variables.Count == 1)
+        {
+            ISymbol? symbol = context.SemanticModel.GetDeclaredSymbol(fieldDeclarationSyntax.Declaration.Variables[0]);
+            if (symbol == null)
+                return;
+            var attribute = symbol!.GetAttributes().FirstOrDefault(ad => ad.AttributeClass!.ToDisplayString().Contains("GenerateDelegate"));
+            if (attribute != null)
+            {
+                Fields.Add((symbol, attribute.NamedArguments.Length == 1 && attribute.NamedArguments[0].Key == "Inline" && (attribute.NamedArguments[0].Value.Value?.Equals((object)true)??false)));
             }
         }
     }
