@@ -22,7 +22,6 @@ public class TestConstruction
         Assert.Equal(43, parent2.R);
     }
     
-    
     [Fact]
     public void InlineAttributeShouldBePlacedIfAskedFor()
     {

@@ -4,7 +4,8 @@
 public class SourceGenerator : ISourceGenerator
 {
     const string InlineAttr = "[System.Runtime.CompilerServices.MethodImplAttribute(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]";
- 
+    const string GeneratorVersion = "0.0.5";
+    
     public void Execute(GeneratorExecutionContext context)
     {
         // retrieve the populated receiver
@@ -60,7 +61,10 @@ namespace {container.ContainingNamespace.ToDisplayString()}
             var parameterNames = m.Parameters.Select(p => p.Name).Join(", ");
             var methodName = m.Name;
             var returnType = m.ReturnType.ToDisplayString();
+            
             return (item.inline ? $"        {InlineAttr}\n" : "") +
+                   $"        [System.CodeDom.Compiler.GeneratedCode(\"DelegateTo.SourceGenerator\", \"{GeneratorVersion}\")]\n" +
+                   $"        [System.Diagnostics.DebuggerStepThrough]\n" +
                    $"        public {returnType} {methodName}({parameters}) => {property.Name}.{methodName}({parameterNames});";
         });
 
@@ -69,18 +73,21 @@ namespace {container.ContainingNamespace.ToDisplayString()}
             var methodName = m.Name;
             var returnType = m.Type.ToDisplayString();
             var sb = new StringBuilder(1024);
-            sb.AppendLine($"        public {returnType} {methodName}\n" +
+            sb.AppendLine($"        [System.CodeDom.Compiler.GeneratedCode(\"DelegateTo.SourceGenerator\", \"{GeneratorVersion}\")]\n" +
+                          $"        public {returnType} {methodName}\n" +
                           $"        {{");
             if (m.GetMethod is not null)
             {
                 if (item.inline)
                     sb.Append("            ").AppendLine(InlineAttr);
+                sb.AppendLine("            [System.Diagnostics.DebuggerStepThrough]");
                 sb.AppendLine($"            get => {property.Name}.{methodName};");
             }
             if (m.SetMethod is not null)
             {
                 if (item.inline)
                     sb.Append("            ").AppendLine(InlineAttr);
+                sb.AppendLine("            [System.Diagnostics.DebuggerStepThrough]");
                 sb.AppendLine($"            set => {property.Name}.{methodName} = value;");
             }
             sb.Append("        }");
@@ -126,6 +133,7 @@ class SyntaxReceiver : ISyntaxContextReceiver
     /// </summary>
     public void OnVisitSyntaxNode(GeneratorSyntaxContext context)
     {
+        // typeof(GenerateDelegateAttribute).GetMethods();
         // any field with at least one attribute is a candidate for property generation
         if (context.Node is PropertyDeclarationSyntax propertyDeclarationSyntax
             && propertyDeclarationSyntax.AttributeLists.Count > 0)
